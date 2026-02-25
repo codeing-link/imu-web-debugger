@@ -15,7 +15,7 @@ window.LineChartPage = (() => {
     const S = () => window.MEMSSerial.state;
 
     let canvas, ctx;
-    let range = 2000;   // Y-axis half-range (lsb)
+    let range = 1000;   // Y-axis half-range (lsb) — hardware max is ±1000 mg
     let windowMs = 30000;  // Time window in ms (30s default)
     let paused = false;
     let active = false;

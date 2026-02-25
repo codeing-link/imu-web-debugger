@@ -11,7 +11,7 @@ window.BarChartPage = (() => {
     const S = () => window.MEMSSerial.state;
 
     let canvas, ctx;
-    let range = 2000;
+    let range = 1000;
 
     const BAR_COLORS = ['#00bcd4', '#e91e8c', '#f59e0b'];
     const BAR_LABELS = ['X', 'Y', 'Z'];
