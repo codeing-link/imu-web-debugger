@@ -187,9 +187,11 @@ window.AttitudePage = (() => {
     /* ══════════════════════════════════════════════════════
        Camera & projection
     ══════════════════════════════════════════════════════ */
-    const CAM_YAW = 28 * DEG;
-    const CAM_PITCH = -22 * DEG;
-    const FOV = 4.5;           // perspective distance
+    // CAM_YAW=0: 保证传感器平放时长方体长轴水平，视觉直观
+    // CAM_PITCH=-25°: 从略偏上方俯视，能看到厚度感
+    const CAM_YAW = 0 * DEG;
+    const CAM_PITCH = -25 * DEG;
+    const FOV = 4.5;
 
     // Precompute camera rotation matrix (fixed)
     function buildCamMat() {
