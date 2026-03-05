@@ -73,6 +73,52 @@ window.MEMSSerial = (() => {
     onFrame: null,   // called on each 6-axis frame: onFrame(gx, gy, gz, ax, ay, az)
   };
 
+  /* ── 数据清洗与滤波流水线 (Sensor Data Pipeline) ── */
+  class SensorFilter {
+    constructor() {
+      this.lastRaw = 0;       // 用于 Spike 检测
+      this.lastOut = 0;       // 用于低通滤波
+      this.initialized = false;
+
+      // 滤波参数
+      this.maxDelta = 25000;  // 尖峰阈值：极短时间内跳变 >25000（如瞬间跳变到极值 -32768）视为底层通信误码
+      this.clampMax = 32767;  // 限幅上限 (16位有符号整数最大值)
+      this.clampMin = -32768; // 限幅下限
+      this.alpha = 0.85;      // 一阶低通系数 (0~1)：0.85 表示 85% 当前新数据 + 15% 历史平滑，极轻度滤波保留动态响应
+    }
+
+    process(raw) {
+      // 1. 异常尖峰值剔除 (Spike Filter)
+      if (this.initialized) {
+        if (Math.abs(raw - this.lastRaw) > this.maxDelta) {
+          raw = this.lastRaw; // 出现离谱跳变，抛弃本次坏点，沿用上一帧正常值
+        }
+      }
+      this.lastRaw = raw;
+
+      // 2. 限幅滤波 (Clamp)
+      if (raw > this.clampMax) raw = this.clampMax;
+      if (raw < this.clampMin) raw = this.clampMin;
+
+      // 3. 一阶低通滤波 (LPF)
+      let out;
+      if (!this.initialized) {
+        out = raw;
+        this.initialized = true;
+      } else {
+        out = this.alpha * raw + (1 - this.alpha) * this.lastOut;
+      }
+      this.lastOut = out;
+
+      return Math.round(out);
+    }
+  }
+
+  const filters = {
+    gx: new SensorFilter(), gy: new SensorFilter(), gz: new SensorFilter(),
+    ax: new SensorFilter(), ay: new SensorFilter(), az: new SensorFilter()
+  };
+
   /* ── Parse one line ────────────────────────────── */
   // 支持 6轴格式: gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z
   // 也兼容旧 3轴格式: x, y, z（自动判断列数）
@@ -83,14 +129,22 @@ window.MEMSSerial = (() => {
 
     if (parts.length >= 6) {
       // ── 6轴模式 ──────────────────────────────────────
-      const gx = parseInt(parts[0].trim(), 10);
-      const gy = parseInt(parts[1].trim(), 10);
-      const gz = parseInt(parts[2].trim(), 10);
-      const ax = parseInt(parts[3].trim(), 10);
-      const ay = parseInt(parts[4].trim(), 10);
-      const az = parseInt(parts[5].trim(), 10);
+      let gx = parseInt(parts[0].trim(), 10);
+      let gy = parseInt(parts[1].trim(), 10);
+      let gz = parseInt(parts[2].trim(), 10);
+      let ax = parseInt(parts[3].trim(), 10);
+      let ay = parseInt(parts[4].trim(), 10);
+      let az = parseInt(parts[5].trim(), 10);
       if (isNaN(gx) || isNaN(gy) || isNaN(gz) ||
         isNaN(ax) || isNaN(ay) || isNaN(az)) return false;
+
+      // 三重滤波处理 (Spike -> Clamp -> LPF)
+      gx = filters.gx.process(gx);
+      gy = filters.gy.process(gy);
+      gz = filters.gz.process(gz);
+      ax = filters.ax.process(ax);
+      ay = filters.ay.process(ay);
+      az = filters.az.process(az);
 
       // 陀螺仪数据 → state.gyro + gyroHistory
       state.gyro.gx = gx; state.gyro.gy = gy; state.gyro.gz = gz;
@@ -107,10 +161,14 @@ window.MEMSSerial = (() => {
 
     } else if (parts.length >= 3) {
       // ── 兼容旧 3轴模式 ───────────────────────────────
-      const x = parseInt(parts[0].trim(), 10);
-      const y = parseInt(parts[1].trim(), 10);
-      const z = parseInt(parts[2].trim(), 10);
+      let x = parseInt(parts[0].trim(), 10);
+      let y = parseInt(parts[1].trim(), 10);
+      let z = parseInt(parts[2].trim(), 10);
       if (isNaN(x) || isNaN(y) || isNaN(z)) return false;
+
+      x = filters.ax.process(x);
+      y = filters.ay.process(y);
+      z = filters.az.process(z);
 
       state.data.x = x; state.data.y = y; state.data.z = z;
       state.pushHistory(x, y, z);

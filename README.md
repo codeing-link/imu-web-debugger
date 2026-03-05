@@ -187,6 +187,7 @@ serial.js  ──→  bar-chart.js   (state.data  → acc x/y/z)
 ## 技术实现要点
 
 - **无框架、零依赖**：纯 HTML / CSS / JavaScript，无任何 npm 包
+- **前端软件滤波管线**：内置异常尖峰剔除 (Spike Filter)、极值限幅 (Clamp) 及一阶低通滤波 (LPF)，稳健过滤通讯产生的偶发毛刺
 - **Canvas 2D 手绘图表**：DPR 感知，ResizeObserver 自适应
 - **niceTick 算法**：柱状图与折线图共用同一坐标系公式，网格线严格对齐
 - **环形历史缓冲**：最大 36k 条，超出后自动从头覆盖（`.shift()`）
