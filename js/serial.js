@@ -70,6 +70,7 @@ window.MEMSSerial = (() => {
 
     // ── Event callbacks (set by pages) ──
     onData: null,   // called after each successful parse: onData(ax, ay, az)
+    onFrame: null,   // called on each 6-axis frame: onFrame(gx, gy, gz, ax, ay, az)
   };
 
   /* ── Parse one line ────────────────────────────── */
@@ -98,6 +99,12 @@ window.MEMSSerial = (() => {
       state.data.x = ax; state.data.y = ay; state.data.z = az;
       state.pushHistory(ax, ay, az);
 
+      state.totalFrames++;
+      state._linesBucket++;
+      if (state.onFrame) state.onFrame(gx, gy, gz, ax, ay, az);
+      if (state.onData) state.onData(ax, ay, az);
+      return true;
+
     } else if (parts.length >= 3) {
       // ── 兼容旧 3轴模式 ───────────────────────────────
       const x = parseInt(parts[0].trim(), 10);
@@ -108,14 +115,14 @@ window.MEMSSerial = (() => {
       state.data.x = x; state.data.y = y; state.data.z = z;
       state.pushHistory(x, y, z);
 
+      state.totalFrames++;
+      state._linesBucket++;
+      if (state.onData) state.onData(x, y, z);
+      return true;
+
     } else {
       return false;
     }
-
-    state.totalFrames++;
-    state._linesBucket++;
-    if (state.onData) state.onData(state.data.x, state.data.y, state.data.z);
-    return true;
   }
 
   /* ── Batched log flush (every 200ms) ───────────── */
