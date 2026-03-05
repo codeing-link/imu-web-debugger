@@ -16,8 +16,9 @@
 | 🔌 **串口连接** | 通过 Web Serial API 直连 MCU，支持扫描、选择、即点即连 |
 | 📊 **Bar Chart** | 实时柱状图，双向（正负值），渐变色，正负方向圆角区分 |
 | 📈 **Line Chart** | 加速度计滚动折线图（示波器风格），支持暂停 / 清除 / 时间窗口调节 |
-| � **Gyroscope** | 陀螺仪角速度独立折线图页，gx/gy/gz 三轴时序，Y 轴范围可调 |
-| �🎭 **演示模式** | 无硬件时自动切换正弦波模拟数据，开箱即用 |
+| 🌀 **Gyroscope** | 陀螺仪角速度独立折线图页，gx/gy/gz 三轴时序，Y 轴范围可调 |
+| 🧭 **3D Attitude** | Madgwick AHRS 姿态解算，四元数 → 3D PCB 实时渲染，陀螺零偏在线校正，支持校准零点 |
+| 🎭 **演示模式** | 无硬件时自动切换正弦波模拟数据，开箱即用 |
 | 📟 **串口日志** | 原始数据实时查看，每 200 ms 批量刷新，吞吐量显示 |
 | ⚡ **高性能渲染** | rAF 驱动，Canvas 2D 手绘，DPR 自适应，FPS 实时显示 |
 
@@ -145,7 +146,8 @@ mems/
     └── pages/
         ├── bar-chart.js     # 柱状图页面模块（加速度计）
         ├── line-chart.js    # 折线图页面模块（加速度计）
-        └── gyro-chart.js    # 陀螺仪折线图页面模块（角速度）
+        ├── gyro-chart.js    # 陀螺仪折线图页面模块（角速度）
+        └── attitude.js      # 3D 姿态页面模块（Madgwick AHRS + Canvas 2D 透视投影）
 ```
 
 ### 模块依赖关系
@@ -154,11 +156,39 @@ mems/
 serial.js  ──→  bar-chart.js   (state.data  → acc x/y/z)
            ──→  line-chart.js  (state.history)
            ──→  gyro-chart.js  (state.gyroHistory → gyro gx/gy/gz)
+           ──→  attitude.js    (onFrame → Madgwick → 四元数 → 3D 渲染)
                      ↑
               app.js（路由 + 初始化）
 ```
 
-> **加载顺序**：`serial.js` → `bar-chart.js` → `line-chart.js` → `gyro-chart.js` → `app.js`
+> **加载顺序**：`serial.js` → `bar-chart.js` → `line-chart.js` → `gyro-chart.js` → `attitude.js` → `app.js`
+
+---
+
+## 坐标系约定（3D Attitude 页）
+
+3D Attitude 页的坐标轴方向与芯片规格书一致：
+
+| 轴 | 方向 | 颜色 |
+|----|------|------|
+| X  | 向右 | 🔴 红 |
+| Y  | 向前（左前斜出） | 🟢 绿 |
+| Z  | 向上 | 🔵 蓝 |
+
+### 原始数据符号修正
+
+经实测，该芯片的 X 轴陀螺输出与 Madgwick 算法右手定则约定**符号相反**，
+因此在送入滤波器前对以下两路数据取反（其余 4 路保持原始符号不变）：
+
+| 数据 | 送入滤波器的值 | 说明 |
+|------|--------------|------|
+| `gyro_x` | `−gyro_x` | X 轴陀螺取反，修正旋转方向 |
+| `acc_x`  | `−acc_x`  | X 轴加速度计同步取反，保持 Madgwick 内部一致性 |
+| `gyro_y / gyro_z` | 原值 | 不变 |
+| `acc_y / acc_z`   | 原值 | 不变 |
+
+> **为什么 gyro 和 acc 必须成对取反？**  
+> Madgwick 滤波器用加速度计校正陀螺积分漂移。如果只取反 gyro_x，静止时加速度计校正会把姿态拉回错误方向，两者对抗导致 Roll 估算错误。两者同时取反后，滤波器看到一致的 X 轴定义，Roll 正确收敛。
 
 ---
 

@@ -112,11 +112,76 @@ window.AttitudePage = (() => {
     }
 
     /* ══════════════════════════════════════════════════════
+       GyroscopeOffset  — 陆永圆陆永圆陆永圆
+       参考 Fusion 库 FusionOffset.c
+
+       工作原理：
+         1. 计算陀螺仪向量模量，若小于阈値则认为静止
+         2. 静止时用低通滤波缓慢估计当前陀螺仪偏差
+         3. 最终输出 = 原始陀螺仪 - 估计偏差
+    ══════════════════════════════════════════════════════ */
+    class GyroscopeOffset {
+        constructor() {
+            // 静止检测阈值(rad/s)：0.5°/s，更严格，减少误判
+            this.threshold = 0.5 * (Math.PI / 180);
+            // 低通滤波时间常数：2s（比之前的8s快4倍，偏差估计更快收敛）
+            this.TAU = 2.0;
+            this.offset = [0, 0, 0];
+            this.stationary = false;
+            // 连续静止帧计数：需要连续静止若干帧才确认静止
+            this._stillCount = 0;
+            this._stillRequired = 5;  // 至少5帧才认为静止
+        }
+
+        reset() {
+            this.offset = [0, 0, 0];
+            this.stationary = false;
+            this._stillCount = 0;
+        }
+
+        /**
+         * Update offset estimate and return bias-corrected gyro (rad/s).
+         * @param {number} gx,gy,gz  已按灵敏度转换的 rad/s
+         * @param {number} dt  帧间隔时间(s)
+         * @returns {number[]}  [gx, gy, gz] 删去偏差后
+         */
+        update(gx, gy, gz, dt) {
+            const mag = Math.sqrt(gx * gx + gy * gy + gz * gz);
+
+            // 需要连续多帧静止才确认，防止短暂抖动误触发
+            if (mag < this.threshold) {
+                this._stillCount = Math.min(this._stillCount + 1, this._stillRequired + 10);
+            } else {
+                this._stillCount = 0;
+            }
+            this.stationary = (this._stillCount >= this._stillRequired);
+
+            if (this.stationary) {
+                // 一阶低通滤波：alpha = dt / (TAU + dt)
+                // 时间常数 TAU=2s，自适应 dt，无需假设固定采样率
+                const alpha = dt / (this.TAU + dt);
+                this.offset[0] += alpha * (gx - this.offset[0]);
+                this.offset[1] += alpha * (gy - this.offset[1]);
+                this.offset[2] += alpha * (gz - this.offset[2]);
+            }
+
+            // ZUPT（Zero-velocity Update）：静止时直接置零，
+            // 彻底阻断陀螺仪零偏对姿态积分的影响
+            if (this.stationary) {
+                return [0, 0, 0];
+            }
+
+            return [gx - this.offset[0], gy - this.offset[1], gz - this.offset[2]];
+        }
+    }
+
+    /* ══════════════════════════════════════════════════════
        Module state
     ══════════════════════════════════════════════════════ */
     let canvas, ctx, active = false;
     const ahrs = new MadgwickAHRS();
-    let lastTs = null;      // for dt computation
+    const gyroOffset = new GyroscopeOffset();  // 陀螺仪零偏在线估计
+    let lastTs = null;
     let demoT = 0;         // demo animation phase
 
     // Sensor sensitivity (default: MPU-6050 ±2000dps / ±2g)
@@ -187,11 +252,25 @@ window.AttitudePage = (() => {
     /* ══════════════════════════════════════════════════════
        Camera & projection
     ══════════════════════════════════════════════════════ */
-    // CAM_YAW=0: 保证传感器平放时长方体长轴水平，视觉直观
+    // CAM_YAW=-30°: 从右前方俯视，使 X 轴朝右、Y 轴朝左前，与规格书视角一致
     // CAM_PITCH=-25°: 从略偏上方俯视，能看到厚度感
-    const CAM_YAW = 0 * DEG;
+    const CAM_YAW = -30 * DEG;
     const CAM_PITCH = -25 * DEG;
     const FOV = 4.5;
+
+    // 轴映射矩阵：将传感器坐标系 (X, Y, Z) 映射到渲染坐标系
+    // 目标（与规格书一致）：
+    //   传感器 X+ → 渲染 X+（向右）
+    //   传感器 Z+ → 渲染 Y+（屏幕向上）
+    //   传感器 Y+ → 渲染 Z-（向前/深度，维持右手坐标系 det=+1）
+    // [ Xr ]   [ 1   0   0 ] [ Xs ]       Xr =  Xs
+    // [ Yr ] = [ 0   0   1 ] [ Ys ]  =>   Yr =  Zs  (Z 轴变为屏幕向上)
+    // [ Zr ]   [ 0  -1   0 ] [ Zs ]       Zr = -Ys  (维持 det=+1)
+    const AXIS_MAP = [
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, -1, 0]
+    ];
 
     // Precompute camera rotation matrix (fixed)
     function buildCamMat() {
@@ -326,16 +405,19 @@ window.AttitudePage = (() => {
         // ── 计算相对姿态： conj(qRef) × q_current ────────────
         const qRel = getRelQuat();
         const sensorR = quatToRot(qRel);   // 相对旋转矩阵
-        const totalR = mulMM(CAM, sensorR);
+        // totalR = CAM × AXIS_MAP × sensorR
+        // AXIS_MAP 将传感器 Z 轴重映射为渲染坐标系的 Y 轴（屏幕向上）
+        const totalR = mulMM(CAM, mulMM(AXIS_MAP, sensorR));
 
         // ── Transform vertices into view space ───────────────
         const tv = VERTS.map(v => mulMV(totalR, v));
         const pv = tv.map(v => project(v, cx, cy, scale));
 
         // ── Compute face info ─────────────────────────────────
+        const sensorR_mapped = mulMM(AXIS_MAP, sensorR);  // 应用轴映射后的旋转
         const faceData = FACES.map(f => {
-            const worldN = mulMV(sensorR, f.n);   // normal in world frame
-            const viewN = mulMV(CAM, worldN);    // normal in view frame
+            const worldN = mulMV(sensorR_mapped, f.n);  // normal in mapped world frame
+            const viewN = mulMV(CAM, worldN);           // normal in view frame
             const avgZ = f.vi.reduce((s, i) => s + tv[i][2], 0) / 4;
             return { ...f, worldN, viewN, avgZ };
         });
@@ -419,11 +501,18 @@ window.AttitudePage = (() => {
         setEl('at-q-w', qw.toFixed(4)); setEl('at-q-x', qx.toFixed(4));
         setEl('at-q-y', qy.toFixed(4)); setEl('at-q-z', qz.toFixed(4));
 
-        // FPS
+        // FPS + 静止状态指示
         renderCount++;
         if (ts - fpsTimer >= 1000) {
             setEl('at-fps', renderCount);
             renderCount = 0; fpsTimer = ts;
+        }
+        // 静止/动态标志
+        const stEl = document.getElementById('at-stationary');
+        if (stEl) {
+            const st = gyroOffset.stationary;
+            stEl.textContent = st ? '• 静止（偏差校正中）' : '▶ 运动';
+            stEl.style.color = st ? '#4ade80' : '#f59e0b';
         }
     }
 
@@ -435,11 +524,20 @@ window.AttitudePage = (() => {
         let dt = lastTs ? (now - lastTs) / 1000 : 0.01;
         dt = Math.max(0.001, Math.min(0.5, dt));
         lastTs = now;
-        // 记录最新加速度计套层推算时用
-        lastAcc.ax = ax_lsb; lastAcc.ay = ay_lsb; lastAcc.az = az_lsb;
+        // 记录最新加速度计（已修正 X 轴符号），供 initFromGravity 使用
+        lastAcc.ax = -ax_lsb; lastAcc.ay = ay_lsb; lastAcc.az = az_lsb;
+
+        // 陀螺仪: LSB → rad/s → 删除偏差
+        // 注意: gx 和 ax 同时取反，修正传感器 X 轴物理约定（与右手定则相反）
+        // gyro 和 acc 必须成对取反，确保 Madgwick 滤波器内部一致性
+        const gxS = -gx_lsb * gyroSens;  // X 轴取反
+        const gyS = gy_lsb * gyroSens;
+        const gzS = gz_lsb * gyroSens;
+        const [gxC, gyC, gzC] = gyroOffset.update(gxS, gyS, gzS, dt);
+
         ahrs.update(
-            gx_lsb * gyroSens, gy_lsb * gyroSens, gz_lsb * gyroSens,
-            ax_lsb * accSens, ay_lsb * accSens, az_lsb * accSens,
+            gxC, gyC, gzC,
+            -ax_lsb * accSens, ay_lsb * accSens, az_lsb * accSens,  // ax 同步取反
             dt
         );
     }
@@ -480,10 +578,11 @@ window.AttitudePage = (() => {
                 lastAcc.ay * accSens,
                 lastAcc.az * accSens
             );
-            qRef = [1, 0, 0, 0];  // 以此姿态为新零点
+            qRef = [1, 0, 0, 0];
+            gyroOffset.reset();       // 清除旧偏差，重新开始估计
             lastTs = null;
             demoT = 0;
-            window.MEMSSerial.queueLog('🔄 姿态已重置（已从当前加速度计估计初始姿态）');
+            window.MEMSSerial.queueLog('🔄 姿态已重置（陀螺仪偏差已清除，重新标定中…）');
         });
 
         // ▶ NEW: 校准零点按鈕 — 记录当前四元数为参考
