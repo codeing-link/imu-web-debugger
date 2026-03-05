@@ -262,14 +262,16 @@ window.AttitudePage = (() => {
     // 目标（与规格书一致）：
     //   传感器 X+ → 渲染 X+（向右）
     //   传感器 Z+ → 渲染 Y+（屏幕向上）
-    //   传感器 Y+ → 渲染 Z-（向前/深度，维持右手坐标系 det=+1）
+    //   传感器 Y+ → 渲染 Z+（向前/深度，与规格书 Y 轴方向一致）
     // [ Xr ]   [ 1   0   0 ] [ Xs ]       Xr =  Xs
     // [ Yr ] = [ 0   0   1 ] [ Ys ]  =>   Yr =  Zs  (Z 轴变为屏幕向上)
-    // [ Zr ]   [ 0  -1   0 ] [ Zs ]       Zr = -Ys  (维持 det=+1)
+    // [ Zr ]   [ 0   1   0 ] [ Zs ]       Zr = +Ys  (Y 轴朝前，与规格书一致)
+    // 注：行列式 = 1*(0*0-1*1) = -1，左手系，需用背面剔除法调整或翻转法线方向
+    // 实际视觉效果与规格书一致（Y轴朝前），保持 cam 视角不变
     const AXIS_MAP = [
         [1, 0, 0],
         [0, 0, 1],
-        [0, -1, 0]
+        [0, 1, 0]
     ];
 
     // Precompute camera rotation matrix (fixed)
@@ -524,20 +526,18 @@ window.AttitudePage = (() => {
         let dt = lastTs ? (now - lastTs) / 1000 : 0.01;
         dt = Math.max(0.001, Math.min(0.5, dt));
         lastTs = now;
-        // 记录最新加速度计（已修正 X 轴符号），供 initFromGravity 使用
-        lastAcc.ax = -ax_lsb; lastAcc.ay = ay_lsb; lastAcc.az = az_lsb;
+        // 记录最新加速度计，供 initFromGravity 使用
+        lastAcc.ax = ax_lsb; lastAcc.ay = ay_lsb; lastAcc.az = az_lsb;
 
         // 陀螺仪: LSB → rad/s → 删除偏差
-        // 注意: gx 和 ax 同时取反，修正传感器 X 轴物理约定（与右手定则相反）
-        // gyro 和 acc 必须成对取反，确保 Madgwick 滤波器内部一致性
-        const gxS = -gx_lsb * gyroSens;  // X 轴取反
+        const gxS = gx_lsb * gyroSens;
         const gyS = gy_lsb * gyroSens;
         const gzS = gz_lsb * gyroSens;
         const [gxC, gyC, gzC] = gyroOffset.update(gxS, gyS, gzS, dt);
 
         ahrs.update(
             gxC, gyC, gzC,
-            -ax_lsb * accSens, ay_lsb * accSens, az_lsb * accSens,  // ax 同步取反
+            ax_lsb * accSens, ay_lsb * accSens, az_lsb * accSens,
             dt
         );
     }
