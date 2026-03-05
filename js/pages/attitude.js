@@ -187,6 +187,7 @@ window.AttitudePage = (() => {
     // Sensor sensitivity (default: MPU-6050 ±2000dps / ±2g)
     let gyroSens = 1 / 16.4 * DEG;   // LSB → rad/s
     let accSens = 1 / 16384;        // LSB → g
+    let sampleRateMode = 'auto';    // 'auto' or numeric Hz frequency
 
     // 最近一帧加速度计原始値（用于重置时立即副履姿态）
     let lastAcc = { ax: 0, ay: 0, az: 1 };  // 默认水平
@@ -523,8 +524,13 @@ window.AttitudePage = (() => {
     ══════════════════════════════════════════════════════ */
     function onSerialFrame(gx_lsb, gy_lsb, gz_lsb, ax_lsb, ay_lsb, az_lsb) {
         const now = performance.now();
-        let dt = lastTs ? (now - lastTs) / 1000 : 0.01;
-        dt = Math.max(0.001, Math.min(0.5, dt));
+        let dt;
+        if (sampleRateMode === 'auto') {
+            dt = lastTs ? (now - lastTs) / 1000 : 0.01;
+            dt = Math.max(0.001, Math.min(0.5, dt));
+        } else {
+            dt = 1.0 / parseFloat(sampleRateMode);
+        }
         lastTs = now;
         // 记录最新加速度计，供 initFromGravity 使用
         lastAcc.ax = ax_lsb; lastAcc.ay = ay_lsb; lastAcc.az = az_lsb;
@@ -560,6 +566,11 @@ window.AttitudePage = (() => {
         document.getElementById('at-acc-sel').addEventListener('change', e => {
             const g = parseFloat(e.target.value);
             accSens = g / 32768;
+        });
+
+        // Sampling Rate selector
+        document.getElementById('at-rate-sel').addEventListener('change', e => {
+            sampleRateMode = e.target.value;
         });
 
         // Beta slider
