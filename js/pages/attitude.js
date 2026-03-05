@@ -32,6 +32,27 @@ window.AttitudePage = (() => {
 
         reset() { this.q = [1, 0, 0, 0]; }
 
+        /**
+         * Init quaternion from gravity vector only (no gyro).
+         * Immediately gives correct pitch & roll; yaw = 0.
+         * @param {number} ax/ay/az  accelerometer in g (raw or scaled, sign matters)
+         */
+        initFromGravity(ax, ay, az) {
+            const n = Math.sqrt(ax * ax + ay * ay + az * az);
+            if (n < 1e-6) { this.reset(); return; }
+            const gx = ax / n, gy = ay / n, gz = az / n;
+
+            // Edge case: sensor completely upside-down (gz ≈ -1)
+            if (gz < -0.9999) { this.q = [0, 1, 0, 0]; return; }
+
+            // Half-angle formula: rotation that takes [0,0,1] → [gx,gy,gz]
+            // w = cos(θ/2) = sqrt((1+gz)/2)
+            // [x,y,z] = sin(θ/2) * axis = (1/sqrt(2*(1+gz))) * [-gy, gx, 0]
+            const w = Math.sqrt((1 + gz) / 2);
+            const f = 1 / (2 * w);           // = 1/sqrt(2*(1+gz))
+            this.q = [w, -gy * f, gx * f, 0];
+        }
+
         /** Update with gyro (rad/s) + accel (g), dt in seconds */
         update(gx, gy, gz, ax, ay, az, dt) {
             const b = this.beta;
@@ -101,6 +122,9 @@ window.AttitudePage = (() => {
     // Sensor sensitivity (default: MPU-6050 ±2000dps / ±2g)
     let gyroSens = 1 / 16.4 * DEG;   // LSB → rad/s
     let accSens = 1 / 16384;        // LSB → g
+
+    // 最近一帧加速度计原始値（用于重置时立即副履姿态）
+    let lastAcc = { ax: 0, ay: 0, az: 1 };  // 默认水平
 
     // ── Zero-offset reference quaternion (按下校准时快照) ──
     let qRef = [1, 0, 0, 0];  // identity = 无偏移
@@ -409,6 +433,8 @@ window.AttitudePage = (() => {
         let dt = lastTs ? (now - lastTs) / 1000 : 0.01;
         dt = Math.max(0.001, Math.min(0.5, dt));
         lastTs = now;
+        // 记录最新加速度计套层推算时用
+        lastAcc.ax = ax_lsb; lastAcc.ay = ay_lsb; lastAcc.az = az_lsb;
         ahrs.update(
             gx_lsb * gyroSens, gy_lsb * gyroSens, gz_lsb * gyroSens,
             ax_lsb * accSens, ay_lsb * accSens, az_lsb * accSens,
@@ -444,13 +470,18 @@ window.AttitudePage = (() => {
             betaLabel.textContent = ahrs.beta.toFixed(3);
         });
 
-        // Reset button (完全重置，包括参考四元数)
+        // Reset button — 从当前重力方向推算初始姿态
         document.getElementById('at-btn-reset').addEventListener('click', () => {
-            ahrs.reset();
-            qRef = [1, 0, 0, 0];
+            // 利用最近一帧加速度计数据设定初始四元数
+            ahrs.initFromGravity(
+                lastAcc.ax * accSens,
+                lastAcc.ay * accSens,
+                lastAcc.az * accSens
+            );
+            qRef = [1, 0, 0, 0];  // 以此姿态为新零点
             lastTs = null;
             demoT = 0;
-            window.MEMSSerial.queueLog('🔄 姿态已重置（附加清岛参考）');
+            window.MEMSSerial.queueLog('🔄 姿态已重置（已从当前加速度计估计初始姿态）');
         });
 
         // ▶ NEW: 校准零点按鈕 — 记录当前四元数为参考
