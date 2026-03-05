@@ -2,9 +2,14 @@
    serial.js  –  Web Serial API + Shared State + History Buffer
    ================================================================
    Exposes global: window.MEMSSerial
-   
-   Data format: printf("%6d, %6d, %6d\r\n", x, y, z)
-   Example:     "   103,   -78,   980\r\n"
+
+   Data format (6-axis):
+     printf("%6d, %6d, %6d , %6d, %6d, %6d\r\n",
+            gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z)
+   Example:  "   120,   -30,    15 ,   103,   -78,   980\r\n"
+
+   state.gyro  = { gx, gy, gz }  — 陀螺仪原始数据（留给新页面）
+   state.data  = { x, y, z }     — 加速度计数据（acc_x/y/z），供现有图表使用
 ================================================================ */
 
 window.MEMSSerial = (() => {
@@ -12,12 +17,12 @@ window.MEMSSerial = (() => {
 
   /* ── USB VID/PID → friendly name map ──────────── */
   const VID_MAP = {
-    0x1A86: { brand: 'WCH (沁恒)',   chips: { 0x7523:'CH340', 0x5523:'CH341', 0x7522:'CH340K', 0x55D4:'CH9102' } },
-    0x10C4: { brand: 'Silicon Labs', chips: { 0xEA60:'CP2102', 0xEA63:'CP2105', 0xEA70:'CP2106', 0xEA71:'CP2108' } },
-    0x0403: { brand: 'FTDI',         chips: { 0x6001:'FT232R', 0x6010:'FT2232', 0x6011:'FT4232', 0x6014:'FT232H', 0x6015:'FT-X' } },
-    0x067B: { brand: 'Prolific',      chips: { 0x2303:'PL2303', 0x23A3:'PL2303HXD' } },
-    0x2341: { brand: 'Arduino',       chips: { 0x0001:'Uno(8U2)', 0x0010:'Mega2560', 0x8036:'Leonardo', 0x0042:'Mega2560R3' } },
-    0x0D28: { brand: 'ARM/mbed',      chips: { 0x0204:'DAPLink' } },
+    0x1A86: { brand: 'WCH (沁恒)', chips: { 0x7523: 'CH340', 0x5523: 'CH341', 0x7522: 'CH340K', 0x55D4: 'CH9102' } },
+    0x10C4: { brand: 'Silicon Labs', chips: { 0xEA60: 'CP2102', 0xEA63: 'CP2105', 0xEA70: 'CP2106', 0xEA71: 'CP2108' } },
+    0x0403: { brand: 'FTDI', chips: { 0x6001: 'FT232R', 0x6010: 'FT2232', 0x6011: 'FT4232', 0x6014: 'FT232H', 0x6015: 'FT-X' } },
+    0x067B: { brand: 'Prolific', chips: { 0x2303: 'PL2303', 0x23A3: 'PL2303HXD' } },
+    0x2341: { brand: 'Arduino', chips: { 0x0001: 'Uno(8U2)', 0x0010: 'Mega2560', 0x8036: 'Leonardo', 0x0042: 'Mega2560R3' } },
+    0x0D28: { brand: 'ARM/mbed', chips: { 0x0204: 'DAPLink' } },
   };
 
   function getDeviceInfo(vid, pid) {
@@ -34,19 +39,20 @@ window.MEMSSerial = (() => {
   const MAX_HISTORY = 36000; // ~6min @ 100Hz
 
   const state = {
-    data: { x: 0, y: 0, z: 0 },
-    connected:   false,
-    demo:        false,
-    port:        null,
-    reader:      null,
+    data: { x: 0, y: 0, z: 0 },         // 加速度计 (acc_x/y/z) — 供现有图表
+    gyro: { gx: 0, gy: 0, gz: 0 },      // 陀螺仪   (gyro_x/y/z) — 留给新页面
+    connected: false,
+    demo: false,
+    port: null,
+    reader: null,
     totalFrames: 0,
     errorFrames: 0,
-    rawLineRate:  0,
+    rawLineRate: 0,
     _linesBucket: 0,
-    knownPorts:  [],
+    knownPorts: [],
     currentPortInfo: null,
 
-    // ── History ring buffer for Line Chart ──
+    // ── Acc history ring buffer (for acc line chart) ──
     // Each entry: { t: DOMHighResTimeStamp (ms), x, y, z }
     history: [],
     pushHistory(x, y, z) {
@@ -54,26 +60,61 @@ window.MEMSSerial = (() => {
       if (this.history.length > MAX_HISTORY) this.history.shift();
     },
 
+    // ── Gyro history ring buffer (for gyro chart page) ──
+    // Each entry: { t: DOMHighResTimeStamp (ms), gx, gy, gz }
+    gyroHistory: [],
+    pushGyroHistory(gx, gy, gz) {
+      this.gyroHistory.push({ t: performance.now(), gx, gy, gz });
+      if (this.gyroHistory.length > MAX_HISTORY) this.gyroHistory.shift();
+    },
+
     // ── Event callbacks (set by pages) ──
-    onData: null,   // called after each successful parse
+    onData: null,   // called after each successful parse: onData(ax, ay, az)
   };
 
   /* ── Parse one line ────────────────────────────── */
+  // 支持 6轴格式: gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z
+  // 也兼容旧 3轴格式: x, y, z（自动判断列数）
   function parseLine(raw) {
     const line = raw.replace(/\r/g, '').trim();
     if (!line) return false;
     const parts = line.split(',');
-    if (parts.length < 3) return false;
-    const x = parseInt(parts[0].trim(), 10);
-    const y = parseInt(parts[1].trim(), 10);
-    const z = parseInt(parts[2].trim(), 10);
-    if (isNaN(x) || isNaN(y) || isNaN(z)) return false;
 
-    state.data.x = x; state.data.y = y; state.data.z = z;
-    state.pushHistory(x, y, z);
+    if (parts.length >= 6) {
+      // ── 6轴模式 ──────────────────────────────────────
+      const gx = parseInt(parts[0].trim(), 10);
+      const gy = parseInt(parts[1].trim(), 10);
+      const gz = parseInt(parts[2].trim(), 10);
+      const ax = parseInt(parts[3].trim(), 10);
+      const ay = parseInt(parts[4].trim(), 10);
+      const az = parseInt(parts[5].trim(), 10);
+      if (isNaN(gx) || isNaN(gy) || isNaN(gz) ||
+        isNaN(ax) || isNaN(ay) || isNaN(az)) return false;
+
+      // 陀螺仪数据 → state.gyro + gyroHistory
+      state.gyro.gx = gx; state.gyro.gy = gy; state.gyro.gz = gz;
+      state.pushGyroHistory(gx, gy, gz);
+      // 加速度计数据 → state.data + history（兼容现有图表）
+      state.data.x = ax; state.data.y = ay; state.data.z = az;
+      state.pushHistory(ax, ay, az);
+
+    } else if (parts.length >= 3) {
+      // ── 兼容旧 3轴模式 ───────────────────────────────
+      const x = parseInt(parts[0].trim(), 10);
+      const y = parseInt(parts[1].trim(), 10);
+      const z = parseInt(parts[2].trim(), 10);
+      if (isNaN(x) || isNaN(y) || isNaN(z)) return false;
+
+      state.data.x = x; state.data.y = y; state.data.z = z;
+      state.pushHistory(x, y, z);
+
+    } else {
+      return false;
+    }
+
     state.totalFrames++;
     state._linesBucket++;
-    if (state.onData) state.onData(x, y, z);
+    if (state.onData) state.onData(state.data.x, state.data.y, state.data.z);
     return true;
   }
 
@@ -96,7 +137,7 @@ window.MEMSSerial = (() => {
     if (document.getElementById('log-panel').classList.contains('open')) {
       lines.forEach(t => {
         const d = document.createElement('div');
-        d.textContent = `[${new Date().toISOString().slice(11,23)}] ${t}`;
+        d.textContent = `[${new Date().toISOString().slice(11, 23)}] ${t}`;
         logArea.appendChild(d);
         logCount++;
       });
@@ -112,9 +153,9 @@ window.MEMSSerial = (() => {
   /* ── Serial read loop ─────────────────────────── */
   async function runReadLoop(port) {
     const decoder = new TextDecoderStream();
-    const pipeP   = port.readable.pipeTo(decoder.writable).catch(() => {});
-    const reader  = decoder.readable.getReader();
-    state.reader  = reader;
+    const pipeP = port.readable.pipeTo(decoder.writable).catch(() => { });
+    const reader = decoder.readable.getReader();
+    state.reader = reader;
 
     let buf = '';
     try {
@@ -153,18 +194,18 @@ window.MEMSSerial = (() => {
 
     state.port = port;
     const info = port.getInfo();
-    const vid  = info.usbVendorId, pid = info.usbProductId;
+    const vid = info.usbVendorId, pid = info.usbProductId;
     const dInfo = getDeviceInfo(vid, pid);
     state.currentPortInfo = { ...dInfo, vid, pid };
 
     setConnected(true, state.currentPortInfo);
     queueLog(`✅ 已连接  ${dInfo.name}  (${dInfo.brand})  波特率 ${baud}`);
     if (vid) queueLog(`   VID:${h(vid)}  PID:${h(pid)}`);
-    queueLog(`📐 格式: printf("%6d, %6d, %6d\\r\\n", x, y, z)`);
+    queueLog(`📐 格式: printf("%6d, %6d, %6d , %6d, %6d, %6d\\r\\n", gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z)`);
 
     await runReadLoop(port);
 
-    try { await port.close(); } catch (_) {}
+    try { await port.close(); } catch (_) { }
     state.port = null; state.reader = null;
     setConnected(false, null);
     queueLog('🔌 串口已断开');
@@ -189,7 +230,7 @@ window.MEMSSerial = (() => {
 
   /* ── Disconnect ───────────────────────────────── */
   async function disconnect() {
-    if (state.reader) await state.reader.cancel().catch(() => {});
+    if (state.reader) await state.reader.cancel().catch(() => { });
   }
 
   /* ── Scan (getPorts) ──────────────────────────── */
@@ -210,12 +251,12 @@ window.MEMSSerial = (() => {
 
   /* ── Port card rendering ──────────────────────── */
   function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function renderPortList(ports, activePort) {
     const portPanel = document.getElementById('port-panel');
-    const portList  = document.getElementById('port-list');
+    const portList = document.getElementById('port-list');
     const portCount = document.getElementById('port-count');
     if (!portPanel || !portList) return;
 
@@ -233,8 +274,8 @@ window.MEMSSerial = (() => {
     }
 
     ports.forEach(port => {
-      const info  = port.getInfo();
-      const vid   = info.usbVendorId, pid = info.usbProductId;
+      const info = port.getInfo();
+      const vid = info.usbVendorId, pid = info.usbProductId;
       const dInfo = getDeviceInfo(vid, pid);
       const isActive = (port === activePort);
 
@@ -278,7 +319,7 @@ window.MEMSSerial = (() => {
     let t = 0;
     demoTimer = setInterval(() => {
       t += 0.04;
-      const x = Math.round(Math.sin(t * 1.1)  * 1500);
+      const x = Math.round(Math.sin(t * 1.1) * 1500);
       const y = Math.round(Math.cos(t * 0.85) * 800);
       const z = Math.round(980 + Math.sin(t * 0.3) * 150);
       state.data.x = x; state.data.y = y; state.data.z = z;
@@ -307,11 +348,11 @@ window.MEMSSerial = (() => {
         else
           queueLog('💡 未发现已授权串口，点击「连接串口」选择设备。');
       });
-      navigator.serial.addEventListener('connect',    () => scan());
+      navigator.serial.addEventListener('connect', () => scan());
       navigator.serial.addEventListener('disconnect', () => scan());
     }
     queueLog('💡 MEMS Dashboard 已就绪');
-    queueLog('💡 格式: printf("%6d, %6d, %6d\\r\\n", x, y, z)');
+    queueLog('💡 格式(6轴): printf("%6d, %6d, %6d , %6d, %6d, %6d\\r\\n", gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z)');
     if (!('serial' in navigator)) queueLog('⚠ 不支持 Web Serial API，将使用演示模式');
   });
 

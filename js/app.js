@@ -12,6 +12,7 @@ window.MEMSApp = (() => {
     const pages = {
         'bar-chart': { module: () => window.BarChartPage, navId: 'nav-bar-chart' },
         'line-chart': { module: () => window.LineChartPage, navId: 'nav-line-chart' },
+        'gyro-chart': { module: () => window.GyroChartPage, navId: 'nav-gyro-chart' },
     };
 
     let currentPage = null;
@@ -123,6 +124,7 @@ window.MEMSApp = (() => {
         // Nav items
         document.getElementById('nav-bar-chart')?.addEventListener('click', () => navigateTo('bar-chart'));
         document.getElementById('nav-line-chart')?.addEventListener('click', () => navigateTo('line-chart'));
+        document.getElementById('nav-gyro-chart')?.addEventListener('click', () => navigateTo('gyro-chart'));
     }
 
     /* ── Bootstrap ─────────────────────────────────── */
@@ -132,6 +134,7 @@ window.MEMSApp = (() => {
         // Init page modules
         window.BarChartPage?.init();
         window.LineChartPage?.init();
+        window.GyroChartPage?.init();
 
         // Default page
         navigateTo('bar-chart');

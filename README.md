@@ -1,10 +1,10 @@
 # MEMS Sensor Dashboard
 
-> 实时 3-DOF MEMS 传感器数据监控面板 — 基于 Web Serial API，零依赖纯前端实现。
+> 实时 6-DOF MEMS 传感器数据监控面板 — 基于 Web Serial API，零依赖纯前端实现。
 
 ![技术栈](https://img.shields.io/badge/Tech-HTML%20%2F%20CSS%20%2F%20JS-blue)
 ![API](https://img.shields.io/badge/API-Web%20Serial-green)
-![版本](https://img.shields.io/badge/版本-3dof-orange)
+![版本](https://img.shields.io/badge/版本-6dof-orange)
 ![协议](https://img.shields.io/badge/License-MIT-lightgrey)
 
 ---
@@ -15,8 +15,9 @@
 |------|------|
 | 🔌 **串口连接** | 通过 Web Serial API 直连 MCU，支持扫描、选择、即点即连 |
 | 📊 **Bar Chart** | 实时柱状图，双向（正负值），渐变色，正负方向圆角区分 |
-| 📈 **Line Chart** | 滚动折线图（示波器风格），支持暂停 / 清除 / 时间窗口调节 |
-| 🎭 **演示模式** | 无硬件时自动切换正弦波模拟数据，开箱即用 |
+| 📈 **Line Chart** | 加速度计滚动折线图（示波器风格），支持暂停 / 清除 / 时间窗口调节 |
+| � **Gyroscope** | 陀螺仪角速度独立折线图页，gx/gy/gz 三轴时序，Y 轴范围可调 |
+| �🎭 **演示模式** | 无硬件时自动切换正弦波模拟数据，开箱即用 |
 | 📟 **串口日志** | 原始数据实时查看，每 200 ms 批量刷新，吞吐量显示 |
 | ⚡ **高性能渲染** | rAF 驱动，Canvas 2D 手绘，DPR 自适应，FPS 实时显示 |
 
@@ -24,20 +25,27 @@
 
 ## 数据格式
 
-固件端只需通过串口按如下格式输出即可（C 语言示例）：
+固件端通过串口按如下 **6轴格式** 输出（C 语言示例）：
 
 ```c
-printf("%6d, %6d, %6d\r\n", accel_x, accel_y, accel_z);
+printf("%6d, %6d, %6d , %6d, %6d, %6d\r\n",
+       raw_data.gyro_x, raw_data.gyro_y, raw_data.gyro_z,
+       raw_data.acc_x,  raw_data.acc_y,  raw_data.acc_z);
 ```
 
 **示例输出：**
 ```
-   103,   -78,   980
-  -512,   256,  1001
+   120,   -30,    15 ,   103,   -78,   980
+    -8,    12,   -22 ,  -512,   256,  1001
 ```
 
-- 三列分别对应 **X、Y、Z** 轴加速度（或角速度）原始 LSB 值
+| 列序 | 字段 | 含义 | 用途 |
+|------|------|------|------|
+| 1–3 | `gyro_x / gyro_y / gyro_z` | 陀螺仪角速度（原始 LSB）| Gyroscope 页显示 |
+| 4–6 | `acc_x / acc_y / acc_z` | 加速度计（原始 LSB）| Bar Chart / Line Chart 显示 |
+
 - 列间以逗号分隔，行尾 `\r\n`
+- 自动向下兼容旧版 3轴格式（仅3列时按加速度计处理）
 - 仅需整数，无需浮点或额外协议
 
 ---
@@ -84,20 +92,21 @@ npx serve .
 ## 界面说明
 
 ```
-┌─ Top Bar ──────────────────────────────────────────┐
-│  M  MEMS Sensor Dashboard          [连接状态 ●]    │
-├─ Sidebar ──┬─ Control Bar ────────────────────────┤
-│            │  波特率 ▼  [扫描串口] [连接串口] [断开]│
-│ Bar Charts │──────────────────────────────────────│
-│ Line Charts│  Port Panel（扫描后展开，卡片式设备列）│
-│            │──────────────────────────────────────│
-│            │  PAGE: Bar Chart / Line Chart        │
-│            │  （Canvas 实时渲染区域）              │
-├────────────┴──────────────────────────────────────┤
-│  Footer Tabs: Motion | Analog Frontend | Virtual  │
-├───────────────────────────────────────────────────┤
-│  Status Bar: 总帧数 | 错误 | 当前串口设备          │
-└───────────────────────────────────────────────────┘
+┌─ Top Bar ────────────────────────────────────────────┐
+│  M  MEMS Sensor Dashboard            [连接状态 ●]    │
+├─ Sidebar ────┬─ Control Bar ────────────────────────┤
+│              │  波特率 ▼  [扫描串口] [连接串口] [断开]│
+│  Bar Charts  │──────────────────────────────────────│
+│  Line Charts │  Port Panel（扫描后展开，卡片式设备列）│
+│  Gyroscope   │──────────────────────────────────────│
+│              │  PAGE: Bar Chart / Line Chart        │
+│              │        / Gyroscope                   │
+│              │  （Canvas 实时渲染区域）              │
+├──────────────┴──────────────────────────────────────┤
+│  Footer Tabs: Motion | Analog Frontend | Virtual    │
+├─────────────────────────────────────────────────────┤
+│  Status Bar: 总帧数 | 错误 | 当前串口设备            │
+└─────────────────────────────────────────────────────┘
 ```
 
 ### Bar Chart 页
@@ -108,10 +117,18 @@ npx serve .
 
 ### Line Chart 页
 
+- 显示加速度计 **acc_x / acc_y / acc_z** 三轴时序数据
 - 可调时间窗口：10s / 30s / 60s / 2min / 5min
 - Y 轴范围可独立调节
 - 支持 **暂停**（冻结当前历史快照）和**清除历史**
 - 最大缓存约 6 分钟（36,000 帧 @ 100 Hz）
+
+### Gyroscope 页
+
+- 显示陀螺仪 **gyro_x / gyro_y / gyro_z** 三轴角速度时序数据
+- 顶部图例实时显示当前三轴数值及采集时长
+- Y 轴默认 ±32768 raw，可调：±500 / ±2000 / ±8000 / ±32768 / ±131072
+- 支持 **暂停** 和**清除历史**，独立 ring buffer（最大 36k 帧）
 
 ---
 
@@ -123,23 +140,25 @@ mems/
 ├── css/
 │   └── style.css           # 全局样式（暗色主题，CSS变量）
 └── js/
-    ├── serial.js            # Web Serial 驱动 + 状态管理 + 历史缓冲
+    ├── serial.js            # Web Serial 驱动 + 状态管理 + 双路历史缓冲
     ├── app.js               # 页面路由 + 共享控件初始化
     └── pages/
-        ├── bar-chart.js     # 柱状图页面模块
-        └── line-chart.js    # 折线图页面模块
+        ├── bar-chart.js     # 柱状图页面模块（加速度计）
+        ├── line-chart.js    # 折线图页面模块（加速度计）
+        └── gyro-chart.js    # 陀螺仪折线图页面模块（角速度）
 ```
 
 ### 模块依赖关系
 
 ```
-serial.js  ──→  bar-chart.js
-           ──→  line-chart.js
+serial.js  ──→  bar-chart.js   (state.data  → acc x/y/z)
+           ──→  line-chart.js  (state.history)
+           ──→  gyro-chart.js  (state.gyroHistory → gyro gx/gy/gz)
                      ↑
               app.js（路由 + 初始化）
 ```
 
-> **加载顺序**：`serial.js` → `bar-chart.js` → `line-chart.js` → `app.js`
+> **加载顺序**：`serial.js` → `bar-chart.js` → `line-chart.js` → `gyro-chart.js` → `app.js`
 
 ---
 

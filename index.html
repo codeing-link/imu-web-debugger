@@ -64,6 +64,18 @@
                 </svg>
                 Line Charts
             </div>
+
+            <div class="sb-item" id="nav-gyro-chart">
+                <svg class="sb-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                    <path d="M4.93 4.93a10 10 0 0 0 0 14.14" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M8.46 8.46a5 5 0 0 0 0 7.07" />
+                </svg>
+                Gyroscope
+            </div>
         </nav>
 
         <!-- ── Content ──────────────────────────────── -->
@@ -227,6 +239,67 @@
 
             </div><!-- /page-line-chart -->
 
+            <!-- ══════════════════════════════════════════
+         PAGE: Gyroscope Chart
+    ══════════════════════════════════════════════ -->
+            <div class="page" id="page-gyro-chart">
+
+                <!-- Legend row -->
+                <div id="lc-legend" class="gc-legend">
+                    <div class="lc-legend-item">
+                        <span class="lc-legend-line" style="background:#00bcd4"></span>
+                        <span class="lc-legend-label">gyro_x [lsb]:</span>
+                        <span class="lc-legend-val" id="gc-val-gx">—</span>
+                    </div>
+                    <div class="lc-legend-item">
+                        <span class="lc-legend-line" style="background:#e91e8c"></span>
+                        <span class="lc-legend-label">gyro_y [lsb]:</span>
+                        <span class="lc-legend-val" id="gc-val-gy">—</span>
+                    </div>
+                    <div class="lc-legend-item">
+                        <span class="lc-legend-line" style="background:#f59e0b"></span>
+                        <span class="lc-legend-label">gyro_z [lsb]:</span>
+                        <span class="lc-legend-val" id="gc-val-gz">—</span>
+                    </div>
+                    <div class="lc-legend-time">
+                        <span class="lt-label">time [s]:</span>
+                        <span class="lt-val" id="gc-val-t">—</span>
+                    </div>
+                    <div class="spacer"></div>
+                    <span class="ch-fps" style="margin-left:0">渲染 <span id="gc-fps">—</span> fps &nbsp;|&nbsp; 解析 <span
+                            id="gc-parse-rate">—</span> /s</span>
+                </div>
+
+                <!-- Toolbar -->
+                <div id="lc-toolbar" class="gc-toolbar">
+                    <span class="tl-label">时间窗口</span>
+                    <select id="gc-window-sel">
+                        <option value="10000">10 s</option>
+                        <option value="30000" selected>30 s</option>
+                        <option value="60000">60 s</option>
+                        <option value="120000">2 min</option>
+                        <option value="300000">5 min</option>
+                    </select>
+                    <span class="tl-label" style="margin-left:8px">Y 轴</span>
+                    <select id="gc-range-sel">
+                        <option value="500">±500</option>
+                        <option value="2000">±2000</option>
+                        <option value="8000">±8000</option>
+                        <option value="32768" selected>±32768 raw</option>
+                        <option value="131072">±131072</option>
+                    </select>
+                    <div class="vdiv"></div>
+                    <button class="btn btn-pause" id="gc-btn-pause">⏸ 暂停</button>
+                    <button class="btn btn-ghost" id="gc-btn-clear">清除历史</button>
+                </div>
+
+                <!-- Canvas -->
+                <div class="canvas-wrap">
+                    <canvas id="gc-canvas" class="chart-canvas"></canvas>
+                </div>
+
+            </div><!-- /page-gyro-chart -->
+
             <!-- ══ Footer Tabs ══════════════════════════ -->
             <div id="footer-tabs">
                 <div class="ftab active">Motion</div>
@@ -262,6 +335,7 @@
     <script src="js/serial.js"></script>
     <script src="js/pages/bar-chart.js"></script>
     <script src="js/pages/line-chart.js"></script>
+    <script src="js/pages/gyro-chart.js"></script>
     <script src="js/app.js"></script>
 
 </body>
