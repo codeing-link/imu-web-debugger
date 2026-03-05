@@ -45,12 +45,12 @@ window.AttitudePage = (() => {
             // Edge case: sensor completely upside-down (gz ≈ -1)
             if (gz < -0.9999) { this.q = [0, 1, 0, 0]; return; }
 
-            // Half-angle formula: rotation that takes [0,0,1] → [gx,gy,gz]
-            // w = cos(θ/2) = sqrt((1+gz)/2)
-            // [x,y,z] = sin(θ/2) * axis = (1/sqrt(2*(1+gz))) * [-gy, gx, 0]
+            // We want q such that R^T(q) * [0,0,1] = [gx,gy,gz]
+            // i.e., R(q) rotates g → [0,0,1], rotation axis = cross(g,[0,0,1]) = [gy,-gx,0]
+            // Half-angle: w = sqrt((1+gz)/2), [x,y,z] = (1/sqrt(2*(1+gz))) * [gy,-gx,0]
             const w = Math.sqrt((1 + gz) / 2);
             const f = 1 / (2 * w);           // = 1/sqrt(2*(1+gz))
-            this.q = [w, -gy * f, gx * f, 0];
+            this.q = [w, gy * f, -gx * f, 0];  // 注意: x=+gy, y=-gx（修正符号）
         }
 
         /** Update with gyro (rad/s) + accel (g), dt in seconds */
