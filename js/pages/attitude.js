@@ -102,6 +102,43 @@ window.AttitudePage = (() => {
     let gyroSens = 1 / 16.4 * DEG;   // LSB → rad/s
     let accSens = 1 / 16384;        // LSB → g
 
+    // ── Zero-offset reference quaternion (按下校准时快照) ──
+    let qRef = [1, 0, 0, 0];  // identity = 无偏移
+
+    /* ── Quaternion helpers ────────────────────────── */
+    // 共轪（单位四元数的逆）
+    function quatConj([w, x, y, z]) { return [w, -x, -y, -z]; }
+
+    // 四元数乘法 p × q
+    function quatMul([w1, x1, y1, z1], [w2, x2, y2, z2]) {
+        return [
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        ];
+    }
+
+    // 四元数 → 3×3 旋转矩阵
+    function quatToRot([w, x, y, z]) {
+        return [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]
+        ];
+    }
+
+    // 四元数 → 欧拉角 (度)
+    function quatGetEuler([w, x, y, z]) {
+        const roll = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)) / DEG;
+        const pitch = Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x)))) / DEG;
+        const yaw = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) / DEG;
+        return { roll, pitch, yaw };
+    }
+
+    // 获取相对四元数 conj(qRef) × q_current
+    function getRelQuat() { return quatMul(quatConj(qRef), ahrs.q); }
+
     /* ══════════════════════════════════════════════════════
        3-D box geometry
        W × H × D = 1.5 × 0.9 × 0.12  (PCB-like proportions)
@@ -260,9 +297,10 @@ window.AttitudePage = (() => {
         const cx = w / 2, cy = h / 2 + 10;
         const scale = Math.min(w, h) * 0.21;
 
-        // ── Build combined rotation: camera × AHRS ──────────
-        const sensorR = ahrs.getRot();         // sensor→world
-        const totalR = mulMM(CAM, sensorR);   // world→view
+        // ── 计算相对姿态： conj(qRef) × q_current ────────────
+        const qRel = getRelQuat();
+        const sensorR = quatToRot(qRel);   // 相对旋转矩阵
+        const totalR = mulMM(CAM, sensorR);
 
         // ── Transform vertices into view space ───────────────
         const tv = VERTS.map(v => mulMV(totalR, v));
@@ -342,15 +380,16 @@ window.AttitudePage = (() => {
 
         draw();
 
-        // Update Euler display
-        const { roll, pitch, yaw } = ahrs.getEuler();
+        // Update Euler display (使用相对姿态)
+        const qRel = getRelQuat();
+        const { roll, pitch, yaw } = quatGetEuler(qRel);
         const setEl = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
         setEl('at-val-roll', roll.toFixed(1) + '°');
         setEl('at-val-pitch', pitch.toFixed(1) + '°');
         setEl('at-val-yaw', yaw.toFixed(1) + '°');
 
-        // Quaternion display
-        const [qw, qx, qy, qz] = ahrs.q;
+        // 四元数显示（显示相对四元数）
+        const [qw, qx, qy, qz] = qRel;
         setEl('at-q-w', qw.toFixed(4)); setEl('at-q-x', qx.toFixed(4));
         setEl('at-q-y', qy.toFixed(4)); setEl('at-q-z', qz.toFixed(4));
 
@@ -405,12 +444,19 @@ window.AttitudePage = (() => {
             betaLabel.textContent = ahrs.beta.toFixed(3);
         });
 
-        // Reset button
+        // Reset button (完全重置，包括参考四元数)
         document.getElementById('at-btn-reset').addEventListener('click', () => {
             ahrs.reset();
+            qRef = [1, 0, 0, 0];
             lastTs = null;
             demoT = 0;
-            window.MEMSSerial.queueLog('🔄 姿态已重置');
+            window.MEMSSerial.queueLog('🔄 姿态已重置（附加清岛参考）');
+        });
+
+        // ▶ NEW: 校准零点按鈕 — 记录当前四元数为参考
+        document.getElementById('at-btn-calib').addEventListener('click', () => {
+            qRef = [...ahrs.q];  // 快照当前姿态
+            window.MEMSSerial.queueLog('✅ 零点已校准 — 当前姿态设为基准');
         });
 
         new ResizeObserver(() => { }).observe(canvas.parentElement);
